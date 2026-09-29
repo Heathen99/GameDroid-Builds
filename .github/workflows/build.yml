@@ -128,7 +128,9 @@ jobs:
           gh release delete "build-$SHORT" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
           gh release create "build-$SHORT" gamedroid.apk gamedroid-installer.apk \
             --repo "$GITHUB_REPOSITORY" --title "GameDroid $SHORT" --notes-file notes.md --latest
-          # Keep the 5 newest builds
-          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+          # Keep the 5 newest builds. Sort by publishedAt: a release's createdAt is its tag commit's date, which is
+          # the same for every build here, so it can't tell them apart (and made GitHub's "latest" stick).
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,publishedAt \
+            --jq 'sort_by(.publishedAt) | reverse | .[5:] | .[].tagName' |
             xargs -r -I{} gh release delete {} --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          gh release edit "build-$SHORT" --repo "$GITHUB_REPOSITORY" --latest
