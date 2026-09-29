@@ -17,6 +17,9 @@ Secrets: `GAMEDROID_TOKEN` (read-only token for the private repo) and `GAMEDROID
 each build installs over the last). Scheduled builds are paused until the key secret exists; a manual run works without it.
 
 ## Community data (`community/`)
+Crash reports and play reports sent from GameDroid ("Send to GameDroid") arrive here as issues labelled
+`crash-report` / `play-report` and stay open.
+
 GameDroid players can share benchmark results and touch/controller layouts from the app (Optimise → Share benchmark,
 game settings → Share this game's layout). The app opens a pre-filled issue here; pressing **Create** is all it takes.
 The `Community submissions` workflow (`.github/workflows/community.yml` + `.github/community/ingest.py`) validates the
