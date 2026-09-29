@@ -1,0 +1,134 @@
+# Lives in the PUBLIC repo Heathen99/GameDroid-builds (copy kept in GameDroid at x17/builds-repo/).
+# Public repos get free Actions minutes. Every 30 minutes it checks GameDroid's main branch; when there's
+# a commit it hasn't built, it checks out the private code with the GAMEDROID_TOKEN secret, builds the
+# app and the small installer, and publishes them as release "build-<sha7>" (newest = latest).
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   GAMEDROID_TOKEN     fine-grained token, repository Heathen99/GameDroid, Contents: Read-only
+#   GAMEDROID_KEYSTORE  (optional) base64 of the signing keystore, so every build has the same signature
+
+name: Build GameDroid
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if this commit was already built"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-gamedroid
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+      short: ${{ steps.head.outputs.short }}
+      build: ${{ steps.exists.outputs.build }}
+    steps:
+      - name: Latest GameDroid commit on main
+        id: head
+        env:
+          TOKEN: ${{ secrets.GAMEDROID_TOKEN }}
+        run: |
+          sha=$(curl -fsS -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github.sha" \
+            https://api.github.com/repos/Heathen99/GameDroid/commits/main)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha::7}" >> "$GITHUB_OUTPUT"
+      - name: Already built?
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TOKEN: ${{ secrets.GAMEDROID_TOKEN }}
+          HAS_KEY: ${{ secrets.GAMEDROID_KEYSTORE != '' }}
+        run: |
+          # main must contain the installer module (older commits can't build both APKs)
+          if ! curl -fsS -o /dev/null -H "Authorization: Bearer $TOKEN" \
+              "https://api.github.com/repos/Heathen99/GameDroid/contents/installer/build.gradle.kts?ref=${{ steps.head.outputs.sha }}"; then
+            echo "::notice::main has no installer module yet; skipping"
+            echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Scheduled runs wait for the signing key so every published build updates the last one
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$HAS_KEY" != "true" ]; then
+            echo "::notice::No GAMEDROID_KEYSTORE secret; scheduled builds are paused"
+            echo "build=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "${{ inputs.force }}" = "true" ] || ! gh release view "build-${{ steps.head.outputs.short }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+
+      - name: Check out GameDroid (private)
+        uses: actions/checkout@v4
+        with:
+          repository: Heathen99/GameDroid
+          ref: ${{ needs.check.outputs.sha }}
+          token: ${{ secrets.GAMEDROID_TOKEN }}
+          fetch-depth: 20
+
+      - name: Add swap
+        run: |
+          sudo fallocate -l 8G /mnt/swapfile.ci
+          sudo chmod 600 /mnt/swapfile.ci
+          sudo mkswap /mnt/swapfile.ci
+          sudo swapon /mnt/swapfile.ci
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.GAMEDROID_KEYSTORE }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            mkdir -p x17/signing
+            echo "$KEYSTORE" | base64 -d > x17/signing/gamedroid-debug.keystore
+          else
+            echo "::warning::No GAMEDROID_KEYSTORE secret: builds use a throwaway key and won't update each other"
+          fi
+
+      - name: Dummy credentials
+        run: printf 'POSTHOG_API_KEY=dummy\nPOSTHOG_HOST=https://us.i.posthog.com\n' > local.properties
+
+      - name: Build app + installer
+        run: ./gradlew :app:assembleModernDebug :installer:assembleDebug --stacktrace
+
+      - name: Unit tests
+        run: ./gradlew :app:testModernDebugUnitTest --tests 'app.gamenative.profiles.*' --tests 'app.gamenative.diagnostics.*' --tests 'app.gamenative.update.*'
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHORT: ${{ needs.check.outputs.short }}
+        run: |
+          cp app/build/outputs/apk/modern/debug/*.apk gamedroid.apk
+          cp installer/build/outputs/apk/debug/*.apk gamedroid-installer.apk
+          git log -10 --format='- %s' > notes.md
+          gh release delete "build-$SHORT" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "build-$SHORT" gamedroid.apk gamedroid-installer.apk \
+            --repo "$GITHUB_REPOSITORY" --title "GameDroid $SHORT" --notes-file notes.md --latest
+          # Keep the 5 newest builds
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+            xargs -r -I{} gh release delete {} --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
