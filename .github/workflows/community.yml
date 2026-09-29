@@ -1,0 +1,49 @@
+# Files GameDroid community submissions (benchmarks, controller/touch layouts) opened from the app as issues.
+# The issue body is untrusted: it is only read by .github/community/ingest.py from the event file (never
+# interpolated into a shell), validated, and written under community/. No secrets are used here.
+name: Community submissions
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: community-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    if: startsWith(github.event.issue.title, '[benchmark]') || startsWith(github.event.issue.title, '[layout]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - id: ingest
+        run: python3 .github/community/ingest.py
+      - name: Commit
+        if: steps.ingest.outputs.result == 'OK'
+        run: |
+          git config user.name "gamedroid-community"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add community
+          git commit -m "Community submission #${ISSUE_NUMBER}"
+          for i in 1 2 3; do git pull --rebase -q origin main && git push -q origin HEAD:main && break; sleep 5; done
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+      - name: Reply and close
+        if: always() && steps.ingest.outputs.result != ''
+        uses: actions/github-script@v7
+        env:
+          RESULT: ${{ steps.ingest.outputs.result }}
+          MESSAGE: ${{ steps.ingest.outputs.message }}
+        with:
+          script: |
+            const ok = process.env.RESULT === 'OK';
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body: process.env.MESSAGE });
+            await github.rest.issues.update({ ...context.repo, issue_number: context.issue.number, state: 'closed',
+              state_reason: ok ? 'completed' : 'not_planned' });

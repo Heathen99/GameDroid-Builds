@@ -15,3 +15,11 @@ and publishes release `build-<commit>`. Only the 5 newest builds are kept.
 
 Secrets: `GAMEDROID_TOKEN` (read-only token for the private repo) and `GAMEDROID_KEYSTORE` (base64 signing key, so
 each build installs over the last). Scheduled builds are paused until the key secret exists; a manual run works without it.
+
+## Community data (`community/`)
+GameDroid players can share benchmark results and touch/controller layouts from the app (Optimise → Share benchmark,
+game settings → Share this game's layout). The app opens a pre-filled issue here; pressing **Create** is all it takes.
+The `Community submissions` workflow (`.github/workflows/community.yml` + `.github/community/ingest.py`) validates the
+data, files it under `community/benchmarks/<game>.json` or `community/layouts/<game>.json`, and closes the issue.
+The app reads these files directly, so Optimise can use results from phones like yours and layouts can be imported
+with one tap. No token is stored in the app.
