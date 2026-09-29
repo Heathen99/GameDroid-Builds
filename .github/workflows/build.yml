@@ -11,7 +11,7 @@ name: Build GameDroid
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,37 * * * *" # off the hour: GitHub drops top-of-hour schedules under load
   workflow_dispatch:
     inputs:
       force:
